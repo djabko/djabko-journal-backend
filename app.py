@@ -1,7 +1,7 @@
 #!python
 
 
-import os, boto3, json, secrets, string
+import os, boto3, json, secrets, string, traceback
 
 from datetime import datetime
 from flask import Flask, request, redirect
@@ -153,18 +153,29 @@ def journal_read():
                 fe = fe & condition if fe is not None else condition
 
         if fe:
-            items = dynamo_table.query(KeyConditionExpression=kce, FilterExpression=fe)
+            results = dynamo_table.query(KeyConditionExpression=kce, FilterExpression=fe)
         else:
-            items = dynamo_table.query(KeyConditionExpression=kce)
+            results = dynamo_table.query(KeyConditionExpression=kce)
 
-        if len(items) <= 0:
-            print('[]')
+        print("results:\n", json.dumps(results, indent=2))
 
-        print(json.dumps(items, indent=2))
+        if 0 < results['Count']:
+            d = results['Items'][0]
+            l = [_ for _ in d.keys()]
 
-        return json.dumps({'count': items['Count'], 'items': items['Items']})
+            for e in l:
 
-    except Exception as e:
-        print(json.dumps(request.json, indent=2))
-        print(e)
+                if e in Constants.r_trans_dict:
+                    new_k = Constants.r_trans_dict[e]
+                    d[new_k] = d[e]
+                    d.pop(e)
+
+                elif e not in Constants.r_trans_dict.values():
+                    d.pop(e)
+
+        return json.dumps({'count': results['Count'], 'items': results['Items']})
+
+    except Exception:
+        print("request:\n", json.dumps(request.json, indent=2))
+        print(traceback.format_exc())
         return "500 server error"
