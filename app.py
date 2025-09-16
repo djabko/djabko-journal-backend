@@ -12,11 +12,9 @@ from util import *
 
 def get_priv(key):
     if key not in os.environ:
-        print(f'ERROR: missing environment variable {key}')
-        exit(-1)
+        raise KeyError(f'ERROR: missing environment variable {key}')
 
     return os.environ[key]
-
 
 app = Flask(__name__)
 dynamodb = boto3.resource(
@@ -34,6 +32,18 @@ VIEWS = [
         "log",
         "read",
         ]
+
+try:
+    get_priv("APP_DEBUG_MODE")
+    DEBUG_MODE = True
+    print("Running in debug mode. App will print detailed logs. ")
+except KeyError:
+    DEBUG_MODE = False
+
+
+def print_dbg(*args, **kwargs):
+    if (DEBUG_MODE):
+        print(*args, **kwargs)
 
 
 def cat(prefix, suffix):
@@ -78,7 +88,7 @@ def journal_delete():
     query = boto3.dynamodb.conditions.Key(Constants.NOTEBOOK.label).eq(notebook)
     items = dynamo_table.query(KeyConditionExpression=query)['Items']
 
-    print(json.dumps(items, indent=2))
+    print_dbg(json.dumps(items, indent=2))
 
     with dynamo_table.batch_writer() as bw:
         for item in items:
@@ -99,7 +109,7 @@ def journal_log():
     if Constants.NOTEBOOK.raw not in data or Constants.MESSAGE.raw not in data:
         return json.dumps({'status': '300', 'error': 'Missing notebook id or message...\n'})
 
-    print(data)
+    print_dbg(data)
 
     item = {Constants.NOTEBOOK.label: data[Constants.NOTEBOOK.raw],
             Constants.DATETIME.label: str(datetime.now()),
@@ -110,7 +120,7 @@ def journal_log():
         if k not in item and k in data and data[k]:
             item[Constants.trans_dict[k]] = data[k]
 
-    print(json.dumps(item))
+    print_dbg(json.dumps(item))
 
     r = dynamo_table.put_item(Item=item)
 
@@ -157,7 +167,7 @@ def journal_read():
         else:
             results = dynamo_table.query(KeyConditionExpression=kce)
 
-        print("results:\n", json.dumps(results, indent=2))
+        print_dbg("results:\n", json.dumps(results, indent=2))
 
         if 0 < results['Count']:
             d = results['Items'][0]
@@ -176,6 +186,6 @@ def journal_read():
         return json.dumps({'count': results['Count'], 'items': results['Items']})
 
     except Exception:
-        print("request:\n", json.dumps(request.json, indent=2))
-        print(traceback.format_exc())
+        print_dbg("request:\n", json.dumps(request.json, indent=2))
+        print_dbg(traceback.format_exc())
         return "500 server error"
