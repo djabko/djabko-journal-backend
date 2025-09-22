@@ -6,6 +6,7 @@ import os, boto3, json, secrets, string, traceback
 from datetime import datetime
 from flask import Flask, request, redirect
 from boto3.dynamodb.conditions import Key
+from argon2.exceptions import VerifyMismatchError
 
 from util import *
 
@@ -114,6 +115,7 @@ def journal_log():
     item = {Constants.NOTEBOOK.label: data[Constants.NOTEBOOK.raw],
             Constants.DATETIME.label: str(datetime.now()),
             Constants.MESSAGE.label: data[Constants.MESSAGE.raw],
+            Constants.PASSWORD.label: data[Constants.PASSWORD.raw],
            }
 
     for k in Constants.trans_dict.keys():
@@ -121,6 +123,17 @@ def journal_log():
             item[Constants.trans_dict[k]] = data[k]
 
     print_dbg(json.dumps(item))
+
+    try:
+        Authenticator.auth(
+                item[Constants.NOTEBOOK.raw], item[Constants.PASSWORD.raw])
+
+    except KeyError:
+        return "403 Forbidden"
+
+    except VerifyMismatchError:
+        return "403 Forbidden"
+        # return "401 Unauthorized" # leaks information
 
     r = dynamo_table.put_item(Item=item)
 

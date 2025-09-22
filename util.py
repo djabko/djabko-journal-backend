@@ -1,7 +1,8 @@
-# Access control is done via RSA asymmetric cryptography:
-#   public key is used for read access
-#   private key is used for write access
-#   both are generated during notebook creation
+from argon2 import PasswordHasher
+
+
+HASHER = PasswordHasher()
+
 
 class Notebook:
 
@@ -43,5 +44,34 @@ class Constants:
     TAG3 = JournalConstant('tag3', 'Tag 3')
     TAG4 = JournalConstant('tag4', 'Tag 4')
 
+    PASSWORD = JournalConstant('password', 'Password')
+
     trans_dict = JournalConstant.trans_dict
     r_trans_dict = JournalConstant.r_trans_dict
+
+
+class Authenticator:
+
+    def auth(dynamo_table, notebook, password):
+        # Query for correct password hash in dynamodb
+        # Hash password
+        # Compare
+
+        kce = Key(Constants.NOTEBOOKK.label, Constants.PASSWORD.label)
+        results = dynamo_table.query(KeyConditionExpression=kce)
+
+        if 'Count' not in results         \
+                or results['Count'] != 1  \
+                or 'Items' not in results \
+                or JournalConstants.PASSWORD.label not in results['Items']:
+
+            # To protect against timing attacks, ensure request takes the same
+            #   amount of time regardless of error.
+            a = ''.join(secrets.choice(string.printable) for _ in range(10))
+            HASHER.hash(s)
+
+            raise KeyError
+
+        correct_hash = results['Items'][JournalConstants.PASSWORD.label]
+        HASHER.verify(correct_hash, HASHER.hash(password))
+        
