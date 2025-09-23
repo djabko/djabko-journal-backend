@@ -1,7 +1,7 @@
+import secrets, string
+
 from argon2 import PasswordHasher
-
-
-HASHER = PasswordHasher()
+from boto3.dynamodb.conditions import Key
 
 
 class Notebook:
@@ -52,26 +52,27 @@ class Constants:
 
 class Authenticator:
 
-    def auth(dynamo_table, notebook, password):
-        # Query for correct password hash in dynamodb
-        # Hash password
-        # Compare
+    def hash(string):
+        return PasswordHasher().hash(string)
 
-        kce = Key(Constants.NOTEBOOKK.label, Constants.PASSWORD.label)
+    def auth(dynamo_table, notebook, password):
+        hasher = PasswordHasher()
+        kce = Key(Constants.NOTEBOOK.label).eq(notebook) \
+                & Key(Constants.DATETIME.label).eq(Constants.PASSWORD.label)
         results = dynamo_table.query(KeyConditionExpression=kce)
 
         if 'Count' not in results         \
                 or results['Count'] != 1  \
                 or 'Items' not in results \
-                or JournalConstants.PASSWORD.label not in results['Items']:
+                or Constants.PASSWORD.label not in results['Items'][0]:
 
             # To protect against timing attacks, ensure request takes the same
             #   amount of time regardless of error.
-            a = ''.join(secrets.choice(string.printable) for _ in range(10))
-            HASHER.hash(s)
+            s = ''.join(secrets.choice(string.printable) for _ in range(10))
+            hasher.hash(s)
 
             raise KeyError
 
-        correct_hash = results['Items'][JournalConstants.PASSWORD.label]
-        HASHER.verify(correct_hash, HASHER.hash(password))
+        correct_hash = results['Items'][0][Constants.PASSWORD.label]
+        hasher.verify(correct_hash, password)
         

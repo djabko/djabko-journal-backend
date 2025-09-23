@@ -60,6 +60,11 @@ def index():
 def journal_create():
 
     while True:
+        data = request.json
+
+        if Constants.PASSWORD.raw not in data:
+            return '400 Missing Password'
+
         alphabet = string.ascii_letters + string.digits
         notebook = ''
 
@@ -73,6 +78,16 @@ def journal_create():
         items = dynamo_table.query(KeyConditionExpression=kce, Limit=1)
         
         if items['Count'] == 0:
+
+            password_hash = Authenticator.hash(data[Constants.PASSWORD.raw])
+
+            r = dynamo_table.put_item(Item={
+                Constants.NOTEBOOK.label: notebook,
+                Constants.DATETIME.label: Constants.PASSWORD.label,
+                Constants.PASSWORD.label: password_hash})
+
+            print_dbg(json.dumps(r))
+
             break
 
     return json.dumps({Constants.NOTEBOOK.raw: notebook})
@@ -126,12 +141,16 @@ def journal_log():
 
     try:
         Authenticator.auth(
-                item[Constants.NOTEBOOK.raw], item[Constants.PASSWORD.raw])
+                dynamo_table,
+                item[Constants.NOTEBOOK.label],
+                item[Constants.PASSWORD.label])
 
     except KeyError:
+        print_dbg(traceback.format_exc())
         return "403 Forbidden"
 
     except VerifyMismatchError:
+        print_dbg(traceback.format_exc())
         return "403 Forbidden"
         # return "401 Unauthorized" # leaks information
 
