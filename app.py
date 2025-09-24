@@ -32,12 +32,14 @@ VIEWS = [
         "delete",
         "log",
         "read",
+        "update",
         ]
 
 try:
     get_priv("APP_DEBUG_MODE")
     DEBUG_MODE = True
     print("Running in debug mode. App will print detailed logs. ")
+
 except KeyError:
     DEBUG_MODE = False
 
@@ -49,6 +51,33 @@ def print_dbg(*args, **kwargs):
 
 def cat(prefix, suffix):
     return f'{prefix}-{suffix}'
+
+
+def http_to_json(message):
+    a = message.split()
+    return json.dumps({'status': a[0], 'message': ' '.join(a[1:])})
+
+def dict_to_json(status, d):
+    d['status'] = str(status)
+    return json.dumps(d)
+
+def extract_params(request, params, labels=False):
+    data = request.json
+
+    item = {}
+
+    for i, e in enumerate(params):
+        if e.raw in data:
+            item[params[i].label] = data[params[i].raw]
+        else:
+            raise KeyError
+
+    if labels:
+        for k in Constants.trans_dict.keys():
+            if k not in item and k in data and data[k]:
+                item[Constants.trans_dict[k]] = data[k]
+
+    return item
 
 
 @app.route("/journal/")
@@ -63,7 +92,7 @@ def journal_create():
         data = request.json
 
         if Constants.PASSWORD.raw not in data:
-            return '400 Missing Password'
+            return http_to_json('400 Missing Password')
 
         alphabet = string.ascii_letters + string.digits
         notebook = ''
@@ -90,17 +119,34 @@ def journal_create():
 
             break
 
-    return json.dumps({Constants.NOTEBOOK.raw: notebook})
+    return dict_to_json(200, {Constants.NOTEBOOK.raw: notebook})
 
 
 @app.delete("/journal/delete")
 def journal_delete():
     data = request.json
 
-    if Constants.NOTEBOOK.raw not in data:
-        return 'Notebook key not supplied\n'
+    if Constants.NOTEBOOK.raw not in data \
+            or Constants.PASSWORD.raw not in data:
+        return http_to_json('400 Insufficient notebook parameters.')
 
-    notebook = data[Constants.NOTEBOOK.raw]
+    try:
+        notebook = data[Constants.NOTEBOOK.raw]
+        password = data[Constants.PASSWORD.raw]
+        Authenticator.auth(dynamo_table, notebook, password)
+
+    except KeyError:
+        print_dbg(traceback.format_exc())
+        return http_to_json("403 Forbidden")
+
+    except VerifyMismatchError:
+        print_dbg(traceback.format_exc())
+
+        if DEBUG_MODE:
+            return http_to_json("401 Unauthorized")
+        else:
+            return http_to_json("403 Forbidden")
+
     query = boto3.dynamodb.conditions.Key(Constants.NOTEBOOK.label).eq(notebook)
     items = dynamo_table.query(KeyConditionExpression=query)['Items']
 
@@ -115,51 +161,50 @@ def journal_delete():
 
             bw.delete_item(Key=key)
 
-    return json.dumps({'deleted': f'{len(items)}'})
+    return dict_to_json(200, {'deleted': f'{len(items)}'})
 
 
 @app.post("/journal/log")
 def journal_log():
     data = request.json
 
-    if Constants.NOTEBOOK.raw not in data or Constants.MESSAGE.raw not in data:
-        return json.dumps({'status': '300', 'error': 'Missing notebook id or message...\n'})
-
     print_dbg(data)
 
-    item = {Constants.NOTEBOOK.label: data[Constants.NOTEBOOK.raw],
-            Constants.DATETIME.label: str(datetime.now()),
-            Constants.MESSAGE.label: data[Constants.MESSAGE.raw],
-            Constants.PASSWORD.label: data[Constants.PASSWORD.raw],
-           }
+    required = [Constants.NOTEBOOK,
+                Constants.MESSAGE,
+                Constants.PASSWORD]
 
-    for k in Constants.trans_dict.keys():
-        if k not in item and k in data and data[k]:
-            item[Constants.trans_dict[k]] = data[k]
+    try:
+        item = extract_params(request, required, labels=True)
+    except KeyError:
+        return http_to_json(f'400 Required parameters: {[e.raw for e in required]}...')
 
+    item[Constants.DATETIME.label] = str(datetime.now())
     print_dbg(json.dumps(item))
 
     try:
-        Authenticator.auth(
-                dynamo_table,
-                item[Constants.NOTEBOOK.label],
-                item[Constants.PASSWORD.label])
+        notebook = item[Constants.NOTEBOOK.label]
+        password = item[Constants.PASSWORD.label]
+        Authenticator.auth(dynamo_table, notebook, password)
 
     except KeyError:
         print_dbg(traceback.format_exc())
-        return "403 Forbidden"
+        return http_to_json("403 Forbidden")
 
     except VerifyMismatchError:
         print_dbg(traceback.format_exc())
-        return "403 Forbidden"
-        # return "401 Unauthorized" # leaks information
+
+        if DEBUG_MODE:
+            return http_to_json("401 Unauthorized")
+        else:
+            return http_to_json("403 Forbidden")
 
     r = dynamo_table.put_item(Item=item)
 
     res = data
     res[Constants.DATETIME.raw] = item[Constants.DATETIME.label]
 
-    return json.dumps(res)
+    return dict_to_json(200, res)
 
 
 @app.post("/journal/read")
@@ -168,7 +213,7 @@ def journal_read():
         data = request.json
 
         if Constants.NOTEBOOK.raw not in data:
-            return 'Notebook key not supplied\n'
+            return http_to_json('400 Notebook key not supplied')
 
         notebook = data[Constants.NOTEBOOK.raw]
         dt = data[Constants.DATETIME.raw] if Constants.DATETIME.raw in data else None
@@ -215,9 +260,9 @@ def journal_read():
                 elif e not in Constants.r_trans_dict.values():
                     d.pop(e)
 
-        return json.dumps({'count': results['Count'], 'items': results['Items']})
+        return dict_to_json(200, {'count': results['Count'], 'items': results['Items']})
 
     except Exception:
         print_dbg("request:\n", json.dumps(request.json, indent=2))
         print_dbg(traceback.format_exc())
-        return "500 server error"
+        return http_to_json("500 server error")
